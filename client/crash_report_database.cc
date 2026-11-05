@@ -25,6 +25,7 @@
 namespace crashpad {
 
 namespace {
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 constexpr base::FilePath::CharType kAttachmentsDirectory[] =
     FILE_PATH_LITERAL("attachments");
 
@@ -35,6 +36,7 @@ bool AttachmentNameIsOK(const std::string& name) {
   }
   return true;
 }
+#endif  // !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }  // namespace
 
 CrashReportDatabase::Report::Report()
@@ -94,6 +96,11 @@ FileReaderInterface* CrashReportDatabase::NewReport::Reader() {
 
 FileWriter* CrashReportDatabase::NewReport::AddAttachment(
     const std::string& name) {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  LOG(ERROR) << "attachments are not supported in the flat database layout";
+  (void)name;
+  return nullptr;
+#else
   if (!AttachmentNameIsOK(name)) {
     LOG(ERROR) << "invalid name for attachment " << name;
     return nullptr;
@@ -118,9 +125,13 @@ FileWriter* CrashReportDatabase::NewReport::AddAttachment(
   attachment_writers_.emplace_back(std::move(writer));
   attachment_removers_.emplace_back(ScopedRemoveFile(attachment_path));
   return attachment_writers_.back().get();
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 void CrashReportDatabase::UploadReport::InitializeAttachments() {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  return;
+#else
   base::FilePath report_attachments_dir = database_->AttachmentsPath(uuid);
   DirectoryReader dir_reader;
   if (!dir_reader.Open(report_attachments_dir)) {
@@ -144,6 +155,7 @@ void CrashReportDatabase::UploadReport::InitializeAttachments() {
 #endif
     attachment_map_[name_string] = attachment_readers_.back().get();
   }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 CrashReportDatabase::UploadReport::UploadReport()
@@ -177,6 +189,10 @@ CrashReportDatabase::OperationStatus CrashReportDatabase::RecordUploadComplete(
 }
 
 base::FilePath CrashReportDatabase::AttachmentsPath(const UUID& uuid) {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  (void)uuid;
+  return base::FilePath();
+#else
 #if BUILDFLAG(IS_WIN)
   const std::wstring uuid_string = uuid.ToWString();
 #else
@@ -184,13 +200,22 @@ base::FilePath CrashReportDatabase::AttachmentsPath(const UUID& uuid) {
 #endif
 
   return DatabasePath().Append(kAttachmentsDirectory).Append(uuid_string);
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 base::FilePath CrashReportDatabase::AttachmentsRootPath() {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  return base::FilePath();
+#else
   return DatabasePath().Append(kAttachmentsDirectory);
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 void CrashReportDatabase::RemoveAttachmentsByUUID(const UUID& uuid) {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  (void)uuid;
+  return;
+#else
   base::FilePath report_attachment_dir = AttachmentsPath(uuid);
   if (!IsDirectory(report_attachment_dir, /*allow_symlinks=*/false)) {
     return;
@@ -210,6 +235,7 @@ void CrashReportDatabase::RemoveAttachmentsByUUID(const UUID& uuid) {
   }
 
   LoggingRemoveDirectory(report_attachment_dir);
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 }  // namespace crashpad

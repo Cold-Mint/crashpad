@@ -700,8 +700,10 @@ bool CrashReportDatabaseWin::Initialize(bool may_create) {
   if (!CreateDirectoryIfNecessary(base_dir_.Append(kReportsDirectory)))
     return false;
 
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
   if (!CreateDirectoryIfNecessary(AttachmentsRootPath()))
     return false;
+#endif  // !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   INITIALIZATION_STATE_SET_VALID(initialized_);
   return true;
@@ -801,6 +803,13 @@ OperationStatus CrashReportDatabaseWin::GetReportForUploading(
     bool report_metrics) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)uuid;
+  (void)report;
+  (void)report_metrics;
+  return kReportNotFound;
+#else
   std::unique_ptr<Metadata> metadata(AcquireMetadata());
   if (!metadata)
     return kDatabaseError;
@@ -821,6 +830,7 @@ OperationStatus CrashReportDatabaseWin::GetReportForUploading(
     report->reset(upload_report.release());
   }
   return os;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 OperationStatus CrashReportDatabaseWin::RecordUploadAttempt(
@@ -829,6 +839,13 @@ OperationStatus CrashReportDatabaseWin::RecordUploadAttempt(
     const std::string& id) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)report;
+  (void)successful;
+  (void)id;
+  return kReportNotFound;
+#else
   if (report->report_metrics_) {
     Metrics::CrashUploadAttempted(successful);
   }
@@ -861,6 +878,7 @@ OperationStatus CrashReportDatabaseWin::RecordUploadAttempt(
     return kDatabaseError;
 
   return kNoError;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 OperationStatus CrashReportDatabaseWin::DeleteReport(const UUID& uuid) {

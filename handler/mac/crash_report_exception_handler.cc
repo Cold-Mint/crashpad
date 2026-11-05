@@ -205,9 +205,11 @@ kern_return_t CrashReportExceptionHandler::CatchMachException(
       return KERN_FAILURE;
     }
 
+#if !defined(CRASHPAD_LOCAL_ONLY)
     if (upload_thread_) {
       upload_thread_->ReportPending(uuid);
     }
+#endif  // !defined(CRASHPAD_LOCAL_ONLY)
   }
 
   if (client_options.system_crash_reporter_forwarding != TriState::kDisabled &&

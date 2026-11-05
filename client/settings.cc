@@ -174,17 +174,28 @@ bool Settings::GetClientID(UUID* client_id) {
 bool Settings::GetUploadsEnabled(bool* enabled) {
   DCHECK(initialized_.is_valid());
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  // Uploads are never enabled in a local-only build.
+  *enabled = false;
+  return true;
+#else
   Data settings;
   if (!OpenAndReadSettings(&settings))
     return false;
 
   *enabled = (settings.options & Data::Options::kUploadsEnabled) != 0;
   return true;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 bool Settings::SetUploadsEnabled(bool enabled) {
   DCHECK(initialized_.is_valid());
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  // The uploads-enabled preference is not persisted in a local-only build.
+  (void)enabled;
+  return true;
+#else
   Data settings;
   ScopedLockedFileHandle handle = OpenForWritingAndReadSettings(&settings);
   if (!handle.is_valid())
@@ -196,11 +207,16 @@ bool Settings::SetUploadsEnabled(bool enabled) {
     settings.options &= ~Data::Options::kUploadsEnabled;
 
   return WriteSettings(handle.get(), settings);
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 bool Settings::GetLastUploadAttemptTime(time_t* time) {
   DCHECK(initialized_.is_valid());
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  *time = 0;
+  return true;
+#else
   Data settings;
   if (!OpenAndReadSettings(&settings))
     return false;
@@ -208,11 +224,16 @@ bool Settings::GetLastUploadAttemptTime(time_t* time) {
   *time = InRangeCast<time_t>(settings.last_upload_attempt_time,
                               std::numeric_limits<time_t>::max());
   return true;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 bool Settings::SetLastUploadAttemptTime(time_t time) {
   DCHECK(initialized_.is_valid());
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  (void)time;
+  return true;
+#else
   Data settings;
   ScopedLockedFileHandle handle = OpenForWritingAndReadSettings(&settings);
   if (!handle.is_valid())
@@ -221,6 +242,7 @@ bool Settings::SetLastUploadAttemptTime(time_t time) {
   settings.last_upload_attempt_time = InRangeCast<int64_t>(time, 0);
 
   return WriteSettings(handle.get(), settings);
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 #if !CRASHPAD_FLOCK_ALWAYS_SUPPORTED

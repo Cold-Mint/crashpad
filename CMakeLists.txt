@@ -12,6 +12,17 @@ if (MSVC)
         "$<$<CONFIG:Release>:/OPT:ICF>")
 endif ()
 
+option(CRASHPAD_LOCAL_ONLY "Build without any network upload support" OFF)
+option(CRASHPAD_FLAT_DATABASE_LAYOUT "Use a flat crash report database layout" OFF)
+
+if (CRASHPAD_LOCAL_ONLY)
+    add_compile_definitions(CRASHPAD_LOCAL_ONLY)
+endif ()
+
+if (CRASHPAD_FLAT_DATABASE_LAYOUT)
+    add_compile_definitions(CRASHPAD_FLAT_DATABASE_LAYOUT)
+endif ()
+
 if (UNIX AND NOT APPLE)
     set(LINUX TRUE)
 endif()
@@ -60,7 +71,9 @@ if (ANDROID)
 elseif (APPLE)
     # do nothing
 elseif (LINUX)
-    find_package(CURL)
+    if (NOT CRASHPAD_LOCAL_ONLY)
+        find_package(CURL)
+    endif()
 else()
     set(OPENSSL_USE_STATIC_LIBS TRUE)
     find_package(OpenSSL)

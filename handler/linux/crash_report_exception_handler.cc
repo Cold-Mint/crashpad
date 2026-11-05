@@ -282,9 +282,11 @@ bool CrashReportExceptionHandler::WriteMinidumpToDatabase(
     return false;
   }
 
+#if !defined(CRASHPAD_LOCAL_ONLY)
   if (upload_thread_) {
     upload_thread_->ReportPending(uuid);
   }
+#endif  // !defined(CRASHPAD_LOCAL_ONLY)
 
   if (local_report_id != nullptr) {
     *local_report_id = uuid;

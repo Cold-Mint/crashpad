@@ -309,9 +309,11 @@ bool CrashReportDatabaseMac::Initialize(bool may_create) {
       return false;
   }
 
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
   if (!CreateOrEnsureDirectoryExists(AttachmentsRootPath())) {
     return false;
   }
+#endif  // !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   // Do an xattr operation as the last step, to ensure the filesystem has
   // support for them. This xattr also serves as a marker for whether the
@@ -465,6 +467,13 @@ CrashReportDatabaseMac::GetReportForUploading(
     bool report_metrics) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)uuid;
+  (void)report;
+  (void)report_metrics;
+  return kReportNotFound;
+#else
   auto upload_report = std::make_unique<UploadReportMac>();
 
   upload_report->file_path = LocateCrashReport(uuid, kReportStatePending);
@@ -525,6 +534,7 @@ CrashReportDatabaseMac::GetReportForUploading(
   upload_report->report_metrics_ = report_metrics;
   report->reset(upload_report.release());
   return kNoError;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 CrashReportDatabase::OperationStatus
@@ -533,6 +543,13 @@ CrashReportDatabaseMac::RecordUploadAttempt(UploadReport* report,
                                             const std::string& id) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)report;
+  (void)successful;
+  (void)id;
+  return kReportNotFound;
+#else
   if (report->report_metrics_) {
     Metrics::CrashUploadAttempted(successful);
   }
@@ -586,6 +603,7 @@ CrashReportDatabaseMac::RecordUploadAttempt(UploadReport* report,
   }
 
   return kNoError;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 CrashReportDatabase::OperationStatus CrashReportDatabaseMac::SkipReportUpload(

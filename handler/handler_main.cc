@@ -1016,6 +1016,7 @@ int HandlerMain(int argc,
   }
 
   ScopedStoppable upload_thread;
+#if !defined(CRASHPAD_LOCAL_ONLY)
   if (!options.url.empty()) {
     // TODO(scottmg): options.rate_limit should be removed when we have a
     // configurable database setting to control upload limiting.
@@ -1034,6 +1035,7 @@ int HandlerMain(int argc,
         CrashReportUploadThread::ProcessPendingReportsObservationCallback()));
     upload_thread.Get()->Start();
   }
+#endif  // !defined(CRASHPAD_LOCAL_ONLY)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   std::unique_ptr<ExceptionHandlerServer::Delegate> exception_handler;

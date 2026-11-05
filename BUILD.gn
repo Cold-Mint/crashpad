@@ -21,6 +21,14 @@ config("crashpad_config") {
     ".",
     root_gen_dir,
   ]
+
+  defines = []
+  if (crashpad_local_only) {
+    defines += [ "CRASHPAD_LOCAL_ONLY" ]
+  }
+  if (crashpad_flat_database_layout) {
+    defines += [ "CRASHPAD_FLAT_DATABASE_LAYOUT" ]
+  }
 }
 
 if (crashpad_is_in_chromium || crashpad_is_in_fuchsia) {

@@ -23,6 +23,16 @@ declare_args() {
   }
 }
 
+declare_args() {
+  # When true, all network upload functionality (HTTP transport, the upload
+  # thread, and upload-related settings) is compiled out.
+  crashpad_local_only = false
+
+  # When true, crash reports are stored in a flat layout under a single "dumps"
+  # directory instead of the state-based new/pending/completed directories.
+  crashpad_flat_database_layout = false
+}
+
 assert(
     crashpad_dependencies == "chromium" || crashpad_dependencies == "fuchsia" ||
     crashpad_dependencies == "standalone" ||

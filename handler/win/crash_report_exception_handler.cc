@@ -142,9 +142,11 @@ unsigned int CrashReportExceptionHandler::ExceptionHandlerServerException(
       return termination_code;
     }
 
+#if !defined(CRASHPAD_LOCAL_ONLY)
     if (upload_thread_) {
       upload_thread_->ReportPending(uuid);
     }
+#endif  // !defined(CRASHPAD_LOCAL_ONLY)
   }
 
   Metrics::ExceptionCaptureResult(Metrics::CaptureResult::kSuccess);

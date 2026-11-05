@@ -92,13 +92,15 @@ if (crashpad_is_android) {
 
 static_library("common") {
   sources = [
-    "crash_report_upload_thread.cc",
     "crash_report_upload_thread.h",
     "minidump_to_upload_parameters.cc",
     "minidump_to_upload_parameters.h",
     "user_stream_data_source.cc",
     "user_stream_data_source.h",
   ]
+  if (!crashpad_local_only) {
+    sources += [ "crash_report_upload_thread.cc" ]
+  }
   if (crashpad_is_apple) {
     sources += [
       "mac/file_limit_annotation.cc",
@@ -115,8 +117,10 @@ static_library("common") {
     "../minidump",
     "../snapshot",
     "../util",
-    "../util:net",
   ]
+  if (!crashpad_local_only) {
+    deps += [ "../util:net" ]
+  }
   if (crashpad_is_win) {
     cflags = [ "/wd4201" ]  # nonstandard extension used : nameless struct/union
   }

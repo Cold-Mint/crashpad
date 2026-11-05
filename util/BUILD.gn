@@ -650,34 +650,36 @@ crashpad_static_library("net") {
     deps += [ "../build:apple_enable_arc" ]
   }
 
-  if (crashpad_is_mac && !crashpad_is_in_fuchsia) {
+  if (crashpad_is_mac && !crashpad_is_in_fuchsia && !crashpad_local_only) {
     sources += [ "net/http_transport_mac.mm" ]
   }
 
-  if (crashpad_is_ios) {
+  if (crashpad_is_ios && !crashpad_local_only) {
     sources += [ "net/http_transport_mac.mm" ]
   }
 
-  if (crashpad_is_win) {
+  if (crashpad_is_win && !crashpad_local_only) {
     sources += [ "net/http_transport_win.cc" ]
   }
 
-  if (crashpad_http_transport_impl == "socket") {
-    sources += [ "net/http_transport_socket.cc" ]
-    if (crashpad_use_boringssl_for_http_transport_socket) {
-      defines = [ "CRASHPAD_USE_BORINGSSL" ]
+  if (!crashpad_local_only) {
+    if (crashpad_http_transport_impl == "socket") {
+      sources += [ "net/http_transport_socket.cc" ]
+      if (crashpad_use_boringssl_for_http_transport_socket) {
+        defines = [ "CRASHPAD_USE_BORINGSSL" ]
 
-      if (crashpad_is_in_chromium || crashpad_is_in_fuchsia) {
-        deps += [ "//third_party/boringssl" ]
-      } else {
-        libs = [
-          "crypto",
-          "ssl",
-        ]
+        if (crashpad_is_in_chromium || crashpad_is_in_fuchsia) {
+          deps += [ "//third_party/boringssl" ]
+        } else {
+          libs = [
+            "crypto",
+            "ssl",
+          ]
+        }
       }
+    } else if (crashpad_http_transport_impl == "libcurl") {
+      sources += [ "net/http_transport_libcurl.cc" ]
     }
-  } else if (crashpad_http_transport_impl == "libcurl") {
-    sources += [ "net/http_transport_libcurl.cc" ]
   }
 }
 

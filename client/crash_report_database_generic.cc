@@ -59,6 +59,12 @@ constexpr base::FilePath::CharType kMetadataExtension[] =
 constexpr base::FilePath::CharType kLockExtension[] =
     FILE_PATH_LITERAL(".lock");
 
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+// In the flat layout all reports live in a single "dumps" directory and their
+// state is tracked in the per-report metadata file instead of the directory
+// they are stored in.
+constexpr base::FilePath::CharType kDumpsDirectory[] = FILE_PATH_LITERAL("dumps");
+#else
 constexpr base::FilePath::CharType kNewDirectory[] = FILE_PATH_LITERAL("new");
 constexpr base::FilePath::CharType kPendingDirectory[] =
     FILE_PATH_LITERAL("pending");
@@ -70,6 +76,7 @@ constexpr const base::FilePath::CharType* kReportDirectories[] = {
     kPendingDirectory,
     kCompletedDirectory,
 };
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
 enum {
   //! \brief Corresponds to uploaded bit of the report state.
@@ -87,6 +94,12 @@ struct ReportMetadata {
   int64_t last_upload_attempt_time = 0;
   time_t creation_time = 0;
   uint8_t attributes = 0;
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // The report state, one of CrashReportDatabaseGeneric::ReportState (kPending
+  // == 1 or kCompleted == 2). It is persisted in the flat layout because the
+  // storage directory no longer encodes the state.
+  int32_t state = 1;
+#endif
 };
 
 // A lock held while using database resources.
@@ -247,17 +260,25 @@ class CrashReportDatabaseGeneric : public CrashReportDatabase {
   // Cleans any attachments that have no associated report in any state.
   void CleanOrphanedAttachments();
 
-  // Reads the metadata for a report from path and returns it in report.
-  bool ReadMetadata(const base::FilePath& path, Report* report);
+  // Reads the metadata for a report from path and returns it in report. In the
+  // flat layout, also returns the persisted report state in *state.
+  bool ReadMetadata(const base::FilePath& path,
+                    Report* report,
+                    ReportState* state);
 
   // Wraps ReadMetadata and removes the report from the database on failure.
-  bool CleaningReadMetadata(const base::FilePath& path, Report* report);
+  bool CleaningReadMetadata(const base::FilePath& path,
+                            Report* report,
+                            ReportState* state);
 
   // Writes metadata for a new report to the filesystem at path.
   static bool WriteNewMetadata(const base::FilePath& path);
 
-  // Writes the metadata for report to the filesystem at path.
-  static bool WriteMetadata(const base::FilePath& path, const Report& report);
+  // Writes the metadata for report to the filesystem at path. state is used in
+  // the flat layout to persist the report state.
+  static bool WriteMetadata(const base::FilePath& path,
+                            const Report& report,
+                            ReportState state);
 
   Settings& SettingsInternal() {
     std::call_once(settings_init_, [this]() {
@@ -287,6 +308,13 @@ bool CrashReportDatabaseGeneric::Initialize(const base::FilePath& path,
     return false;
   }
 
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  if (!LoggingCreateDirectory(base_dir_.Append(kDumpsDirectory),
+                              FilePermissions::kOwnerOnly,
+                              true)) {
+    return false;
+  }
+#else
   for (const base::FilePath::CharType* subdir : kReportDirectories) {
     if (!LoggingCreateDirectory(
             base_dir_.Append(subdir), FilePermissions::kOwnerOnly, true)) {
@@ -298,6 +326,7 @@ bool CrashReportDatabaseGeneric::Initialize(const base::FilePath& path,
           AttachmentsRootPath(), FilePermissions::kOwnerOnly, true)) {
     return false;
   }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   INITIALIZATION_STATE_SET_VALID(initialized_);
   return true;
@@ -331,8 +360,13 @@ OperationStatus CrashReportDatabaseGeneric::PrepareNewCrashReport(
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
   auto new_report = std::make_unique<NewReport>();
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  if (!new_report->Initialize(
+          this, base_dir_.Append(kDumpsDirectory), kCrashReportExtension)) {
+#else
   if (!new_report->Initialize(
           this, base_dir_.Append(kNewDirectory), kCrashReportExtension)) {
+#endif
     return kFileSystemError;
   }
 
@@ -358,11 +392,17 @@ OperationStatus CrashReportDatabaseGeneric::FinishedWritingCrashReport(
   FileOffset size = report->Writer()->Seek(0, SEEK_END);
 
   report->Writer()->Close();
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // In the flat layout the report is written directly into the dumps directory,
+  // so it is already in place and only needs to be kept.
+  std::ignore = report->file_remover_.release();
+#else
   if (!MoveFileOrDirectory(report->file_remover_.get(), path)) {
     return kFileSystemError;
   }
   // We've moved the report to pending, so it no longer needs to be removed.
   std::ignore = report->file_remover_.release();
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   // Close all the attachments and disarm their removers too.
   for (auto& writer : report->attachment_writers_) {
@@ -407,6 +447,13 @@ OperationStatus CrashReportDatabaseGeneric::GetReportForUploading(
     bool report_metrics) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)uuid;
+  (void)report;
+  (void)report_metrics;
+  return kReportNotFound;
+#else
   auto upload_report = std::make_unique<LockfileUploadReport>();
 
   base::FilePath path;
@@ -423,6 +470,7 @@ OperationStatus CrashReportDatabaseGeneric::GetReportForUploading(
 
   report->reset(upload_report.release());
   return kNoError;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 OperationStatus CrashReportDatabaseGeneric::SkipReportUpload(
@@ -441,14 +489,21 @@ OperationStatus CrashReportDatabaseGeneric::SkipReportUpload(
     return os;
   }
 
+  report.upload_explicitly_requested = false;
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // In the flat layout there is no state directory to move between; only the
+  // persisted metadata state changes.
+  if (!WriteMetadata(path, report, kCompleted)) {
+    return kDatabaseError;
+  }
+#else
   base::FilePath completed_path(ReportPath(uuid, kCompleted));
   ScopedLockFile completed_lock_file;
   if (!completed_lock_file.ResetAcquire(completed_path)) {
     return kBusyError;
   }
 
-  report.upload_explicitly_requested = false;
-  if (!WriteMetadata(completed_path, report)) {
+  if (!WriteMetadata(completed_path, report, kCompleted)) {
     return kDatabaseError;
   }
 
@@ -459,6 +514,7 @@ OperationStatus CrashReportDatabaseGeneric::SkipReportUpload(
   if (!LoggingRemoveFile(ReplaceFinalExtension(path, kMetadataExtension))) {
     return kDatabaseError;
   }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   return kNoError;
 }
@@ -504,12 +560,19 @@ OperationStatus CrashReportDatabaseGeneric::RequestUpload(const UUID& uuid) {
   }
 
   report.upload_explicitly_requested = true;
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // In the flat layout there is no state directory to move between; only the
+  // persisted metadata state changes.
+  if (!WriteMetadata(path, report, kPending)) {
+    return kDatabaseError;
+  }
+#else
   base::FilePath pending_path = ReportPath(uuid, kPending);
   if (!MoveFileOrDirectory(path, pending_path)) {
     return kFileSystemError;
   }
 
-  if (!WriteMetadata(pending_path, report)) {
+  if (!WriteMetadata(pending_path, report, kPending)) {
     return kDatabaseError;
   }
 
@@ -518,6 +581,7 @@ OperationStatus CrashReportDatabaseGeneric::RequestUpload(const UUID& uuid) {
       return kDatabaseError;
     }
   }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   Metrics::CrashReportPending(Metrics::PendingReportReason::kUserInitiated);
   return kNoError;
@@ -525,8 +589,9 @@ OperationStatus CrashReportDatabaseGeneric::RequestUpload(const UUID& uuid) {
 
 int CrashReportDatabaseGeneric::CleanDatabase(time_t lockfile_ttl) {
   int removed = 0;
-  time_t now = time(nullptr);
 
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  time_t now = time(nullptr);
   DirectoryReader reader;
   const base::FilePath new_dir(base_dir_.Append(kNewDirectory));
   if (reader.Open(new_dir)) {
@@ -546,10 +611,15 @@ int CrashReportDatabaseGeneric::CleanDatabase(time_t lockfile_ttl) {
       }
     }
   }
+#endif  // !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   removed += CleanReportsInState(kPending, lockfile_ttl);
   removed += CleanReportsInState(kCompleted, lockfile_ttl);
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // The flat layout has no attachments directory to clean.
+#else
   CleanOrphanedAttachments();
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 #if !CRASHPAD_FLOCK_ALWAYS_SUPPORTED
   base::FilePath settings_path(kSettings);
   if (Settings::IsLockExpired(settings_path, lockfile_ttl)) {
@@ -569,6 +639,13 @@ OperationStatus CrashReportDatabaseGeneric::RecordUploadAttempt(
     const std::string& id) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
 
+#if defined(CRASHPAD_LOCAL_ONLY)
+  LOG(ERROR) << "uploading is not supported in a local-only build";
+  (void)report;
+  (void)successful;
+  (void)id;
+  return kReportNotFound;
+#else
   if (report->report_metrics_) {
     Metrics::CrashUploadAttempted(successful);
   }
@@ -585,6 +662,11 @@ OperationStatus CrashReportDatabaseGeneric::RecordUploadAttempt(
   if (successful) {
     report->upload_explicitly_requested = false;
 
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+    // In the flat layout the report stays in place; only the metadata state
+    // changes below.
+    report->Reader()->Close();
+#else
     base::FilePath completed_report_path = ReportPath(report->uuid, kCompleted);
 
     if (!lock_file.ResetAcquire(completed_report_path)) {
@@ -598,9 +680,10 @@ OperationStatus CrashReportDatabaseGeneric::RecordUploadAttempt(
 
     LoggingRemoveFile(ReplaceFinalExtension(report_path, kMetadataExtension));
     report_path = completed_report_path;
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
   }
 
-  if (!WriteMetadata(report_path, *report)) {
+  if (!WriteMetadata(report_path, *report, successful ? kCompleted : kPending)) {
     return kDatabaseError;
   }
 
@@ -609,12 +692,15 @@ OperationStatus CrashReportDatabaseGeneric::RecordUploadAttempt(
   }
 
   return kNoError;
+#endif  // defined(CRASHPAD_LOCAL_ONLY)
 }
 
 base::FilePath CrashReportDatabaseGeneric::ReportPath(const UUID& uuid,
                                                       ReportState state) {
   DCHECK_NE(state, kUninitialized);
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
   DCHECK_NE(state, kSearchable);
+#endif
 
 #if BUILDFLAG(IS_WIN)
   const std::wstring uuid_string = uuid.ToWString();
@@ -622,8 +708,14 @@ base::FilePath CrashReportDatabaseGeneric::ReportPath(const UUID& uuid,
   const std::string uuid_string = uuid.ToString();
 #endif
 
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  (void)state;
+  return base_dir_.Append(kDumpsDirectory)
+      .Append(uuid_string + kCrashReportExtension);
+#else
   return base_dir_.Append(kReportDirectories[state])
       .Append(uuid_string + kCrashReportExtension);
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 OperationStatus CrashReportDatabaseGeneric::LocateAndLockReport(
@@ -631,6 +723,21 @@ OperationStatus CrashReportDatabaseGeneric::LocateAndLockReport(
     ReportState desired_state,
     base::FilePath* path,
     ScopedLockFile* lock_file) {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  base::FilePath local_path(ReportPath(uuid, desired_state));
+  ScopedLockFile local_lock;
+  if (!local_lock.ResetAcquire(local_path)) {
+    return kBusyError;
+  }
+
+  if (!IsRegularFile(local_path)) {
+    return kReportNotFound;
+  }
+
+  *path = local_path;
+  *lock_file = std::move(local_lock);
+  return kNoError;
+#else
   std::vector<ReportState> searchable_states;
   if (desired_state == kSearchable) {
     searchable_states.push_back(kPending);
@@ -657,6 +764,7 @@ OperationStatus CrashReportDatabaseGeneric::LocateAndLockReport(
   }
 
   return kReportNotFound;
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 OperationStatus CrashReportDatabaseGeneric::CheckoutReport(
@@ -673,9 +781,17 @@ OperationStatus CrashReportDatabaseGeneric::CheckoutReport(
     return os;
   }
 
-  if (!CleaningReadMetadata(local_path, report)) {
+  ReportState report_state = kUninitialized;
+  if (!CleaningReadMetadata(local_path, report, &report_state)) {
     return kDatabaseError;
   }
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // In the flat layout the directory does not encode the report state, so
+  // verify it against the requested state.
+  if (state != kSearchable && report_state != state) {
+    return kReportNotFound;
+  }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   *path = local_path;
   *lock_file = std::move(local_lock);
@@ -690,7 +806,12 @@ OperationStatus CrashReportDatabaseGeneric::ReportsInState(
   DCHECK_NE(state, kSearchable);
   DCHECK_NE(state, kNew);
 
-  const base::FilePath dir_path(base_dir_.Append(kReportDirectories[state]));
+  const base::FilePath dir_path(
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+      base_dir_.Append(kDumpsDirectory));
+#else
+      base_dir_.Append(kReportDirectories[state]));
+#endif
   DirectoryReader reader;
   if (!reader.Open(dir_path)) {
     return kDatabaseError;
@@ -712,9 +833,17 @@ OperationStatus CrashReportDatabaseGeneric::ReportsInState(
     }
 
     Report report;
-    if (!CleaningReadMetadata(filepath, &report)) {
+    ReportState report_state = kUninitialized;
+    if (!CleaningReadMetadata(filepath, &report, &report_state)) {
       continue;
     }
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+    // In the flat layout all reports share one directory, so filter by the
+    // persisted state.
+    if (report_state != state) {
+      continue;
+    }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
     reports->push_back(report);
     reports->back().file_path = filepath;
   }
@@ -723,7 +852,12 @@ OperationStatus CrashReportDatabaseGeneric::ReportsInState(
 
 int CrashReportDatabaseGeneric::CleanReportsInState(ReportState state,
                                                     time_t lockfile_ttl) {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  const base::FilePath dir_path(base_dir_.Append(kDumpsDirectory));
+  (void)state;
+#else
   const base::FilePath dir_path(base_dir_.Append(kReportDirectories[state]));
+#endif
   DirectoryReader reader;
   if (!reader.Open(dir_path)) {
     return 0;
@@ -742,6 +876,16 @@ int CrashReportDatabaseGeneric::CleanReportsInState(ReportState state,
       const base::FilePath metadata_path(
           ReplaceFinalExtension(filepath, kMetadataExtension));
       ScopedLockFile report_lock;
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+      // In the flat layout a report that is still being written has a .dmp but
+      // no .meta yet. Only treat it as orphaned once it has been stale for
+      // lockfile_ttl seconds, matching the non-flat "new" directory cleanup.
+      timespec filetime;
+      if (!FileModificationTime(filepath, &filetime) ||
+          filetime.tv_sec > time(nullptr) - lockfile_ttl) {
+        continue;
+      }
+#endif
       if (report_lock.ResetAcquire(filepath) && !IsRegularFile(metadata_path) &&
           LoggingRemoveFile(filepath)) {
         ++removed;
@@ -786,6 +930,9 @@ int CrashReportDatabaseGeneric::CleanReportsInState(ReportState state,
 }
 
 void CrashReportDatabaseGeneric::CleanOrphanedAttachments() {
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  return;
+#else
   base::FilePath root_attachments_dir(AttachmentsRootPath());
   DirectoryReader reader;
   if (!reader.Open(root_attachments_dir)) {
@@ -826,10 +973,12 @@ void CrashReportDatabaseGeneric::CleanOrphanedAttachments() {
       RemoveAttachmentsByUUID(uuid);
     }
   }
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 }
 
 bool CrashReportDatabaseGeneric::ReadMetadata(const base::FilePath& path,
-                                              Report* report) {
+                                              Report* report,
+                                              ReportState* state) {
   const base::FilePath metadata_path(
       ReplaceFinalExtension(path, kMetadataExtension));
 
@@ -862,7 +1011,9 @@ bool CrashReportDatabaseGeneric::ReadMetadata(const base::FilePath& path,
   // Seed the total size with the main report size and then add the sizes of any
   // potential attachments.
   uint64_t total_size = GetFileSize(path);
+#if !defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
   total_size += GetDirectorySize(AttachmentsPath(uuid));
+#endif
 
   report->uuid = uuid;
   report->upload_attempts = metadata.upload_attempts;
@@ -873,13 +1024,19 @@ bool CrashReportDatabaseGeneric::ReadMetadata(const base::FilePath& path,
       (metadata.attributes & kAttributeUploadExplicitlyRequested) != 0;
   report->file_path = path;
   report->total_size = total_size;
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  *state = static_cast<ReportState>(metadata.state);
+#else
+  *state = kUninitialized;
+#endif
   return true;
 }
 
 bool CrashReportDatabaseGeneric::CleaningReadMetadata(
     const base::FilePath& path,
-    Report* report) {
-  if (ReadMetadata(path, report)) {
+    Report* report,
+    ReportState* state) {
+  if (ReadMetadata(path, report, state)) {
     return true;
   }
 
@@ -908,13 +1065,18 @@ bool CrashReportDatabaseGeneric::WriteNewMetadata(const base::FilePath& path) {
 #endif  // defined(MEMORY_SANITIZER)
   metadata = {};
   metadata.creation_time = time(nullptr);
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  // New reports are always created in the pending state.
+  metadata.state = static_cast<int32_t>(kPending);
+#endif
 
   return LoggingWriteFile(handle.get(), &metadata, sizeof(metadata));
 }
 
 // static
 bool CrashReportDatabaseGeneric::WriteMetadata(const base::FilePath& path,
-                                               const Report& report) {
+                                               const Report& report,
+                                               ReportState state) {
   const base::FilePath metadata_path(
       ReplaceFinalExtension(path, kMetadataExtension));
 
@@ -939,6 +1101,11 @@ bool CrashReportDatabaseGeneric::WriteMetadata(const base::FilePath& path,
       (report.uploaded ? kAttributeUploaded : 0) |
       (report.upload_explicitly_requested ? kAttributeUploadExplicitlyRequested
                                           : 0);
+#if defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
+  metadata.state = static_cast<int32_t>(state);
+#else
+  (void)state;
+#endif  // defined(CRASHPAD_FLAT_DATABASE_LAYOUT)
 
   return LoggingWriteFile(handle.get(), &metadata, sizeof(metadata)) &&
          LoggingWriteFile(handle.get(), report.id.c_str(), report.id.size());

@@ -1,5 +1,4 @@
 set(CRASHPAD_HANDLER_LIBRARY_FILES
-    crash_report_upload_thread.cc
     crash_report_upload_thread.h
     handler_main.cc
     minidump_to_upload_parameters.cc
@@ -9,6 +8,10 @@ set(CRASHPAD_HANDLER_LIBRARY_FILES
     user_stream_data_source.cc
     user_stream_data_source.h
 )
+
+if (NOT CRASHPAD_LOCAL_ONLY)
+    list(APPEND CRASHPAD_HANDLER_LIBRARY_FILES crash_report_upload_thread.cc)
+endif ()
 
 if (APPLE)
     list(APPEND CRASHPAD_HANDLER_LIBRARY_FILES

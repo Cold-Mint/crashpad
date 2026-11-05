@@ -135,6 +135,9 @@ class CrashReportDatabase {
     //!     `[a-zA-Z0-9._-]`.
     //! \return A FileWriter that the caller should use to write the contents of
     //!     the attachment, or `nullptr` on failure with an error logged.
+    //!
+    //! When `CRASHPAD_FLAT_DATABASE_LAYOUT` is defined, attachments are not
+    //! supported: this method logs an error and always returns `nullptr`.
     FileWriter* AddAttachment(const std::string& name);
 
    private:
@@ -430,11 +433,17 @@ class CrashReportDatabase {
 
   //! \brief Build a filepath for the root attachments directory.
   //!
+  //! When `CRASHPAD_FLAT_DATABASE_LAYOUT` is defined, attachments are not
+  //! supported and this returns an empty path.
+  //!
   //! \return The filepath to the attachments directory.
   base::FilePath AttachmentsRootPath();
 
   //! \brief  Build a filepath for the directory for the report to hold
   //!     attachments.
+  //!
+  //! When `CRASHPAD_FLAT_DATABASE_LAYOUT` is defined, attachments are not
+  //! supported and this returns an empty path.
   //!
   //! \param[in] uuid The unique identifier for the crash report record.
   //!
@@ -443,6 +452,9 @@ class CrashReportDatabase {
 
   //! \brief Attempts to remove any attachments associated with the given
   //!     report UUID. There may not be any, so failing is not an error.
+  //!
+  //! When `CRASHPAD_FLAT_DATABASE_LAYOUT` is defined, attachments are not
+  //! supported and this is a no-op.
   //!
   //! \param[in] uuid The unique identifier for the crash report record.
   void RemoveAttachmentsByUUID(const UUID& uuid);
