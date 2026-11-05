@@ -16,6 +16,45 @@ limitations under the License.
 
 # Backtrace fork of Crashpad
 
+## New changes
+
+- Add a `CRASHPAD_LOCAL_ONLY` build macro to strip out the network upload functionality.
+
+- Add a `CRASHPAD_FLAT_DATABASE_LAYOUT` build macro to store crash dumps in a
+  single flat `dumps/` directory.
+
+
+The crash report database layout has been flattened. Crash dumps and their metadata are now stored directly under dumps/, instead of being spread across the previous pending/, new/, completed/, and attachments/ directories. settings.dat remains at the database root.
+
+This change removes the intermediate report-state directories and simplifies the on-disk structure.
+
+Previous Layout
+
+```sh
+crashpad$ tree
+.
+├── attachments
+├── completed
+├── new
+├── pending
+│   ├── 2ee49008-0775-4feb-b25a-c1eb1376f976.dmp
+│   └── 2ee49008-0775-4feb-b25a-c1eb1376f976.meta
+└── settings.dat
+```
+
+New Layout
+
+```sh
+tree
+.
+├── dumps
+│   ├── 2ee49008-0775-4feb-b25a-c1eb1376f976.dmp
+│   └── 2ee49008-0775-4feb-b25a-c1eb1376f976.meta
+└── settings.dat
+```
+
+---
+
 This is a fork of the Crashpad project with changes provided by
 [Backtrace I/O](https://backtrace.io), a [Sauce Labs](https://saucelabs.com)
 Company.

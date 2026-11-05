@@ -14,6 +14,7 @@
 
 # Keep sorted
 
+.idea
 *.Makefile
 *.ninja
 *.pyc
