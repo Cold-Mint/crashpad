@@ -50,14 +50,28 @@ target_compile_definitions(backtrace_common INTERFACE
     MINI_CHROMIUM_INTERNAL_BUILDFLAG_VALUE_IS_CHROMEOS_LACROS=MINI_CHROMIUM_INTERNAL_BUILDFLAG_VALUE_IS_CHROMEOS
 )
 
-if (NOT ZLIB_FOUND)
+if (ZLIB_FOUND)
+    # System zlib found by find_package(ZLIB); the imported ZLIB::ZLIB target
+    # is provided by the find module.
+    target_compile_definitions(backtrace_common INTERFACE
+        CRASHPAD_INCLUDES CRASHPAD_ZLIB_SOURCE_SYSTEM)
+elseif (TARGET ZLIB::ZLIB)
+    # Another dependency (e.g. SDL_image on MSVC) already built a vendored zlib
+    # and defined the ZLIB::ZLIB target. Reuse it instead of adding our own
+    # copy, which would collide on the "zlib" target name.
+    target_compile_definitions(backtrace_common INTERFACE
+        CRASHPAD_INCLUDES CRASHPAD_ZLIB_SOURCE_SYSTEM)
+elseif (TARGET zlib)
+    # A raw "zlib" target already exists without a namespaced alias; alias and
+    # reuse it.
+    add_library(ZLIB::ZLIB ALIAS zlib)
+    target_compile_definitions(backtrace_common INTERFACE
+        CRASHPAD_INCLUDES CRASHPAD_ZLIB_SOURCE_SYSTEM)
+else()
     add_subdirectory(third_party/zlib)
     add_library(ZLIB::ZLIB ALIAS zlib)
     target_compile_definitions(backtrace_common INTERFACE
         CRASHPAD_INCLUDES CRASHPAD_ZLIB_SOURCE_EMBEDDED)
-else()
-    target_compile_definitions(backtrace_common INTERFACE
-        CRASHPAD_INCLUDES CRASHPAD_ZLIB_SOURCE_SYSTEM)
 endif()
 
 target_compile_definitions(backtrace_common INTERFACE
